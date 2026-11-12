@@ -1,25 +1,39 @@
 {
   "expo": {
-    "name": "kcal-coach",
+    "name": "Kcal Coach",
     "slug": "kcal-coach",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "app.kcalcoach.dev"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0C1410",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "app.kcalcoach.dev"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "scheme": "kcalcoach",
+    "backgroundColor": "#0C1410",
+    "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-sqlite",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
     }
   }
 }
