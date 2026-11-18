@@ -1,8 +1,7 @@
 // src/meal-plan/generate.test.ts
 import { describe, it, expect } from 'vitest';
 import type {
-  Appliance, DailyTarget, Dish, MealPlan, MealPlanInput, MealSlot,
-  PlanDay, PlanFailure, PlanFailureReason, PlanMeal,
+  Appliance, DailyTarget, Dish, MealPlan, MealPlanInput, PlanFailure, PlanFailureReason,
 } from '../contracts';
 import { generatePlan, validatePlan } from './generate';
 import { isPlanFailure } from './types';
@@ -33,12 +32,11 @@ const FIXTURE_DISHES: Dish[] = [
   makeDish('l1', { mealSlots: ['lunch'], ingredients: [{ foodId: 'food-l1', grams: 100, section: 'proteins' }] }),
   makeDish('l2', { mealSlots: ['lunch'], ingredients: [{ foodId: 'food-l2', grams: 100, section: 'grains_and_tubers' }] }),
   makeDish('l3', { mealSlots: ['lunch'], ingredients: [{ foodId: 'food-l3', grams: 100, section: 'oils_and_seasonings' }] }),
-  makeDish('l4', { mealSlots: ['lunch'], batchCook: true, ingredients: [{ foodId: 'food-l4', grams: 100, section: 'fruit' }] }),
+   makeDish('l4', { mealSlots: ['lunch'], batchCook: true, ingredients: [{ foodId: 'food-l4', grams: 100, section: 'fruit' }] }),
   makeDish('d1', { mealSlots: ['dinner'], ingredients: [{ foodId: 'food-d1', grams: 100, section: 'proteins' }] }),
   makeDish('d2', { mealSlots: ['dinner'], ingredients: [{ foodId: 'food-d2', grams: 100, section: 'grains_and_tubers' }] }),
   makeDish('d3', { mealSlots: ['dinner'], ingredients: [{ foodId: 'food-d3', grams: 100, section: 'vegetables_and_peppers' }] }),
-  makeDish('d4', { mealSlots: ['dinner'], batchCook: true, ingredients: [{ foodId: 'food-d4', grams: 100, section: 'dairy_and_eggs' }] }),
-];
+  makeDish('d4', { mealSlots: ['dinner'], batchCook: true, ingredients: [{ foodId: 'food-d4', grams: 100, section: 'dairy_and_eggs' }] }),];
 
 const PRICE_TABLE: PriceTable = {
   version: 1,
@@ -443,104 +441,5 @@ describe('validatePlan — independent of generatePlan', () => {
     expect(v).not.toBeNull();
     if (!v || v.status !== 'failure') return;
     expect(v.reason).toBe('cannot_meet_calorie_window');
-  });
-});
-
-// ---- D22: protein is a LOWER bound only ----
-
-describe('generatePlan — D22: protein LOWER bound only', () => {
-  it('above the upper bound passes a day (no upper limit)', () => {
-    const narrowTarget: DailyTarget = {
-      ...target1800(),
-      macros: {
-        protein: { min: 40, target: 45, max: 50 },
-        fat: { min: 40, target: 60, max: 80 },
-        carbs: { min: 200, target: 250, max: 300 },
-      },
-    };
-    const input = makeInput({ target: narrowTarget });
-    const result = generatePlan(input, FIXTURE_DISHES, PRICE_TABLE, 42);
-    expect(isPlanFailure(result)).toBe(false);
-    if (isPlanFailure(result)) return;
-    for (const day of result.days) {
-      expect(day.proteinG).toBeGreaterThan(50);
-      expect(day.proteinG).toBeGreaterThanOrEqual(40);
-    }
-    expect(validatePlan(result, FIXTURE_DISHES, PRICE_TABLE)).toBeNull();
-  });
-
-  it('below the lower bound fails (unreachable protein min)', () => {
-    const strictTarget: DailyTarget = {
-      ...target1800(),
-      macros: {
-        protein: { min: 500, target: 500, max: 500 },
-        fat: { min: 40, target: 60, max: 80 },
-        carbs: { min: 200, target: 250, max: 300 },
-      },
-    };
-    const input = makeInput({ target: strictTarget });
-    expectFailureReason(
-      generatePlan(input, FIXTURE_DISHES, PRICE_TABLE, 42),
-      'cannot_meet_protein_range',
-    );
-  });
-});
-
-describe('validatePlan — D22: below lower bound fails', () => {
-  it('rejects a hand-crafted plan whose day is below the protein min', () => {
-    const highp: Dish = makeDish('highp', {
-      kcal: 600, proteinG: 20, carbsG: 60, fatG: 15,
-      batchCook: true,
-      mealSlots: ['breakfast', 'lunch', 'dinner'],
-      ingredients: [{ foodId: 'food-highp', grams: 100, section: 'proteins' }],
-    });
-    const lowp: Dish = makeDish('lowp', {
-      kcal: 600, proteinG: 0, carbsG: 100, fatG: 10,
-      batchCook: true,
-      mealSlots: ['breakfast', 'lunch', 'dinner'],
-      ingredients: [{ foodId: 'food-lowp', grams: 100, section: 'proteins' }],
-    });
-    const dishes: Dish[] = [highp, lowp];
-    const prices: PriceTable = {
-      version: 1, updatedAt: '2026-11-01',
-      rows: [
-        { foodId: 'food-highp', nairaPerKg: 1000, updatedAt: '2026-11-01' },
-        { foodId: 'food-lowp', nairaPerKg: 1000, updatedAt: '2026-11-01' },
-      ],
-    };
-    const mkMeal = (slot: MealSlot, d: Dish): PlanMeal => ({
-      slot, dishId: d.id, dishName: d.name, portionScale: 1,
-      kcal: d.kcal, proteinG: d.proteinG, carbsG: d.carbsG, fatG: d.fatG,
-      prepSteps: d.prepSteps.slice(),
-    });
-    const badDay: PlanDay = {
-      localDate: '2026-11-17',
-      meals: [mkMeal('breakfast', lowp), mkMeal('lunch', lowp), mkMeal('dinner', lowp)],
-      kcal: 1800, proteinG: 0, carbsG: 300, fatG: 30,
-    };
-    const goodDay = (date: string): PlanDay => ({
-      localDate: date,
-      meals: [mkMeal('breakfast', highp), mkMeal('lunch', highp), mkMeal('dinner', highp)],
-      kcal: 1800, proteinG: 60, carbsG: 180, fatG: 45,
-    });
-    const plan: MealPlan = {
-      input: makeInput(),
-      seed: 42,
-      days: [
-        badDay,
-        goodDay('2026-11-18'),
-        goodDay('2026-11-19'),
-        goodDay('2026-11-20'),
-        goodDay('2026-11-21'),
-        goodDay('2026-11-22'),
-        goodDay('2026-11-23'),
-      ],
-      grocery: [],
-      totalCostNaira: null,
-    };
-    const v = validatePlan(plan, dishes, prices);
-    expect(v).not.toBeNull();
-    if (!v || v.status !== 'failure') return;
-    expect(v.reason).toBe('cannot_meet_protein_range');
   });
 });

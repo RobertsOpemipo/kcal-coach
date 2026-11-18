@@ -14,10 +14,6 @@ import {
   PORTION_SCALE_MIN,
 } from './config/needs-review';
 
-/** Relative epsilon for boundary comparisons. Absorbs IEEE-754 rounding from
- *  sums of products (e.g. `baseKcal × scale` that should equal `kcalLo`). */
-const REL_EPS = 1e-6;
-
 function shuffle<T>(items: readonly T[], rng: () => number): T[] {
   const a = items.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -69,6 +65,7 @@ function resolveBudgetNaira(input: MealPlanInput): BudgetResolution {
   return { kind: 'amount', naira: v };
 }
 
+/** Combined lower/upper kcal bounds given target + floor. */
 function kcalBounds(target: DailyTarget, kcalFloor: number): { lo: number; hi: number } {
   const lo = Math.max(target.kcal * (1 - CALORIE_WINDOW_TOLERANCE), kcalFloor);
   const hi = target.kcal * (1 + CALORIE_WINDOW_TOLERANCE);
@@ -80,10 +77,8 @@ type ScaleSolution =
   | { ok: false; reason: PlanFailureReason; detail: string };
 
 /**
- * D22: protein LOWER bound only. Kcal window and floor remain strict.
- * `sHi = max(sLo, effHi)` guarantees the returned scale is never below sLo
- * when the two boundaries are within `REL_EPS` of each other (float rounding).
- * validatePlan applies the same REL_EPS tolerance on its checks.
+ * D22: enforce protein LOWER bound only. No upper bound on protein. Kcal
+ * window and kcal floor remain strict.
  */
 function solveDayScale(baseKcal: number, baseProt: number, input: MealPlanInput): ScaleSolution {
   if (!(baseKcal > 0) || !(baseProt > 0)) {
@@ -96,17 +91,18 @@ function solveDayScale(baseKcal: number, baseProt: number, input: MealPlanInput)
   const sKcalHi = kcalHi / baseKcal;
   const sProtLo = protLo / baseProt;
 
+  // Effective scale range from the kcal window alone.
   const effLo = Math.max(PORTION_SCALE_MIN, sKcalLo);
   const effHi = Math.min(PORTION_SCALE_MAX, sKcalHi);
 
-  if (effLo - effHi > REL_EPS) {
+  if (effLo > effHi) {
     return {
       ok: false,
       reason: 'cannot_meet_calorie_window',
       detail: `base ${baseKcal.toFixed(0)} kcal cannot reach [${kcalLo.toFixed(0)}, ${kcalHi.toFixed(0)}] at any portion in [${PORTION_SCALE_MIN}, ${PORTION_SCALE_MAX}]`,
     };
   }
-  if (sProtLo - effHi > REL_EPS) {
+  if (sProtLo > effHi) {
     return {
       ok: false,
       reason: 'cannot_meet_protein_range',
@@ -114,67 +110,36 @@ function solveDayScale(baseKcal: number, baseProt: number, input: MealPlanInput)
     };
   }
   const sLo = Math.max(effLo, sProtLo);
-  const sHi = Math.max(sLo, effHi);
-  const scale = Math.min(sHi, Math.max(sLo, 1.0));
+  const scale = Math.min(effHi, Math.max(sLo, 1.0));
   return { ok: true, scale };
 }
 
-type DayPickResult =
-  | { ok: true; dishes: Dish[] }
-  | { ok: false; reason: PlanFailureReason; detail: string };
-
-/**
- * Bounded exhaustive search across the day's slot pools. Tries dishes in
- * protein-density order, with DFS backtracking, respecting the repeat limit.
- *
- * `MAX_COMBOS` caps work. For 3 meals × ~10 dishes/slot, 3000 combos is
- * ~3× the whole search space; for 4 meals it covers most. Failure returns the
- * last `solveDayScale` reason observed (which is usually the binding constraint).
- */
+/** Pick a day's dishes greedily by protein density, respecting repeat limits. */
 function pickDayProteinBiased(
   slots: MealSlot[],
   bySlot: ReadonlyMap<MealSlot, Dish[]>,
   countById: ReadonlyMap<string, number>,
   input: MealPlanInput,
-): DayPickResult {
-  const MAX_COMBOS = 3000;
-  const pools = slots.map((slot) =>
-    [...bySlot.get(slot)!].sort((a, b) => (b.proteinG / b.kcal) - (a.proteinG / a.kcal)),
-  );
-  const localCounts = new Map(countById);
+): Dish[] | null {
   const picked: Dish[] = [];
-  let lastReason: PlanFailureReason = 'cannot_meet_protein_range';
-  let lastDetail = 'no feasible dish combination found';
-  let combos = 0;
-
-  function dfs(depth: number): boolean {
-    if (combos >= MAX_COMBOS) return false;
-    if (depth === slots.length) {
-      combos++;
-      const tKcal = picked.reduce((a, d) => a + d.kcal, 0);
-      const tProt = picked.reduce((a, d) => a + d.proteinG, 0);
-      const solved = solveDayScale(tKcal, tProt, input);
-      if (solved.ok) return true;
-      lastReason = solved.reason;
-      lastDetail = solved.detail;
-      return false;
-    }
-    const pool = pools[depth]!;
+  const localCounts = new Map(countById);
+  for (const slot of slots) {
+    const pool = [...bySlot.get(slot)!].sort((a, b) => (b.proteinG / b.kcal) - (a.proteinG / a.kcal));
+    let chosen: Dish | null = null;
     for (const cand of pool) {
-      if (combos >= MAX_COMBOS) return false;
       const wouldCount = (localCounts.get(cand.id) ?? 0) + 1;
       if (!cand.batchCook && wouldCount > MAX_DISH_REPEATS_PER_WEEK) continue;
-      picked.push(cand);
-      localCounts.set(cand.id, wouldCount);
-      if (dfs(depth + 1)) return true;
-      localCounts.set(cand.id, wouldCount - 1);
-      picked.pop();
+      chosen = cand;
+      break;
     }
-    return false;
+    if (!chosen) return null;
+    picked.push(chosen);
+    localCounts.set(chosen.id, (localCounts.get(chosen.id) ?? 0) + 1);
   }
-
-  if (dfs(0)) return { ok: true, dishes: picked.slice() };
-  return { ok: false, reason: lastReason, detail: lastDetail };
+  const tK = picked.reduce((a, d) => a + d.kcal, 0);
+  const tP = picked.reduce((a, d) => a + d.proteinG, 0);
+  if (!solveDayScale(tK, tP, input).ok) return null;
+  return picked;
 }
 
 export function generatePlan(
@@ -197,7 +162,7 @@ export function generatePlan(
     bySlot.set(slot, fitting);
   }
 
-  // 2. Must-include.
+  // 2. Must-include: each must appear in some dish in the pool.
   for (const foodId of input.mustIncludeFoodIds) {
     const found = pool.some((d) => d.ingredients.some((i) => i.foodId === foodId));
     if (!found) return fail('must_include_unavailable', `no dish in the filtered pool contains ${foodId}`);
@@ -215,7 +180,7 @@ export function generatePlan(
   const missing = [...neededFoodIds].filter((id) => lookupPrice(prices, id) === null).sort();
   if (missing.length > 0) return { status: 'needs_prices', missing };
 
-  // 5. Pre-assign must-includes.
+  // 5. Pre-assign must-includes in deterministic order to earliest free slot.
   const skeleton: (Dish | null)[][] = Array.from({ length: 7 }, () => slots.map(() => null));
   const countById = new Map<string, number>();
   const canUse = (d: Dish) => d.batchCook || (countById.get(d.id) ?? 0) < MAX_DISH_REPEATS_PER_WEEK;
@@ -240,7 +205,7 @@ export function generatePlan(
     if (!assigned) return fail('must_include_unavailable', `could not fit a dish containing ${foodId} into the week`);
   }
 
-  // 6. Round-robin fill.
+  // 6. Round-robin fill remaining slots.
   const shuffledBySlot = new Map<MealSlot, Dish[]>();
   const cursorBySlot = new Map<MealSlot, number>();
   for (const slot of slots) {
@@ -269,16 +234,15 @@ export function generatePlan(
     }
   }
 
-  // 6b. Repair any day that cannot be scaled. Two-stage:
-  //   (i)  single swap (fast path for small fixes)
-  //   (ii) bounded DFS over the day's slot pools (fallback)
+  // 6b. Repair any day that cannot be scaled to satisfy kcal + protein-lower.
   for (let day = 0; day < 7; day++) {
     const ds = skeleton[day]!.map((d) => d!);
     const tKcal = ds.reduce((a, d) => a + d.kcal, 0);
     const tProt = ds.reduce((a, d) => a + d.proteinG, 0);
     if (solveDayScale(tKcal, tProt, input).ok) continue;
 
-    // (i) single swap
+    // (i) Single swap — try the weakest-density dish first, replace with
+    // the highest-density alternative from the same slot.
     const byDensity = ds
       .map((d, i) => ({ i, density: d.proteinG / d.kcal }))
       .sort((a, b) => a.density - b.density);
@@ -307,21 +271,21 @@ export function generatePlan(
     }
     if (repaired) continue;
 
-    // (ii) bounded exhaustive re-pick
+    // (ii) Full-day re-pick with protein bias.
     for (const d of ds) countById.set(d.id, (countById.get(d.id) ?? 0) - 1);
     const newPick = pickDayProteinBiased(slots, bySlot, countById, input);
-    if (!newPick.ok) {
+    if (!newPick) {
       for (const d of ds) countById.set(d.id, (countById.get(d.id) ?? 0) + 1);
-      return fail(newPick.reason, `day ${day + 1}: ${newPick.detail}`);
+      return fail('cannot_meet_protein_range', `day ${day + 1}: no feasible dish combination found`);
     }
     for (let s = 0; s < slots.length; s++) {
-      const d = newPick.dishes[s]!;
+      const d = newPick[s]!;
       skeleton[day]![s] = d;
       countById.set(d.id, (countById.get(d.id) ?? 0) + 1);
     }
   }
 
-  // 7. Build days.
+  // 7. Build days with a day-level uniform scale.
   const days: PlanDay[] = [];
   const allMeals: PlanMeal[] = [];
   for (let day = 0; day < 7; day++) {
@@ -370,9 +334,8 @@ export function generatePlan(
 
 /**
  * Rechecks every rule against a plan. D22: protein LOWER bound only; kcal
- * window and kcal floor remain strict. Float boundary checks use `REL_EPS`
- * relative tolerance, matching `solveDayScale`. Everything is recomputed
- * from the plan's meals + dishes + prices — never trusts stored totals.
+ * window and kcal floor still strict. Recomputes everything from the plan's
+ * meals + dishes + prices.
  */
 export function validatePlan(
   plan: MealPlan,
@@ -438,15 +401,12 @@ export function validatePlan(
       useCount.set(meal.dishId, (useCount.get(meal.dishId) ?? 0) + 1);
     }
 
-    if (dayKcal < kcalLo - REL_EPS * kcalLo) {
+    if (dayKcal < kcalLo || dayKcal > kcalHi) {
       return fail('cannot_meet_calorie_window', `day ${day.localDate} kcal ${dayKcal.toFixed(0)} outside [${kcalLo.toFixed(0)}, ${kcalHi.toFixed(0)}]`);
     }
-    if (dayKcal > kcalHi + REL_EPS * kcalHi) {
-      return fail('cannot_meet_calorie_window', `day ${day.localDate} kcal ${dayKcal.toFixed(0)} outside [${kcalLo.toFixed(0)}, ${kcalHi.toFixed(0)}]`);
-    }
-    // D22: only the LOWER protein bound is enforced, with float tolerance.
-    if (dayProt < protLo - REL_EPS * protLo) {
-      return fail('cannot_meet_protein_range', `day ${day.localDate} protein ${dayProt.toFixed(1)} g below min ${protLo.toFixed(1)}`);
+    // D22: only the LOWER protein bound is enforced.
+    if (dayProt < protLo) {
+      return fail('cannot_meet_protein_range', `day ${day.localDate} protein ${dayProt.toFixed(1)} g below min ${protLo}`);
     }
     if (Math.abs(day.kcal - dayKcal) > 0.01
       || Math.abs(day.proteinG - dayProt) > 0.01
