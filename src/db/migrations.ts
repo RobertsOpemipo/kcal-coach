@@ -73,6 +73,13 @@ export const MIGRATIONS: readonly string[] = [
     attempts INTEGER NOT NULL DEFAULT 0
   );
   `,
+  // 2: food list fields used by search and default portions
+  `
+  ALTER TABLE food ADD COLUMN aliases TEXT NOT NULL DEFAULT '';
+  ALTER TABLE food ADD COLUMN portion_g REAL NOT NULL DEFAULT 100;
+  ALTER TABLE food ADD COLUMN portion_label TEXT NOT NULL DEFAULT '100 g';
+  ALTER TABLE food ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 1;
+  `,
 ];
 
 export function currentVersion(db: SqlDriver): number {

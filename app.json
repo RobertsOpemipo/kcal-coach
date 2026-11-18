@@ -30,7 +30,20 @@
       "expo-router",
       "expo-font",
       "expo-sqlite",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Kcal Coach uses the camera to recognise your plate. Photos are analysed on your phone and never uploaded.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Kcal Coach reads a photo you choose so it can recognise the food. It stays on your phone."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -1,0 +1,4 @@
+# Python 3.10 to 3.13. Run on your PC or in Google Colab.
+tensorflow>=2.16
+numpy
+pillow
