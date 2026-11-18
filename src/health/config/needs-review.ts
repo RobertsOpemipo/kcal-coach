@@ -36,3 +36,26 @@ export const GOAL_CONFIG = {
   bmiReferBelow: 18.5,
   minAdultAge: 18,
 } as const;
+
+/** Default daily water goal in ml. NEEDS EXPERT REVIEW (needs vary with weight, heat and activity). */
+export const WATER_GOAL_ML = 2000;
+export const WATER_QUICK_ADD_ML = [250, 500] as const;
+
+
+/**
+ * Healthy target band for weight loss, as a fraction of body weight per week.
+ * `[min, max]`, both positive (magnitudes of loss). NEEDS EXPERT REVIEW.
+ */
+export const TARGET_LOSS_FRACTION_PER_WEEK_RANGE: readonly [number, number] = [0.0025, 0.01];
+
+/**
+ * Healthy target band for weight gain, as a fraction of body weight per week.
+ * `[min, max]`, both positive (magnitudes of gain). NEEDS EXPERT REVIEW.
+ */
+export const TARGET_GAIN_FRACTION_PER_WEEK_RANGE: readonly [number, number] = [0.0025, 0.01];
+
+/**
+ * Half-width of the "stable" band for the maintain goal, as a fraction of body
+ * weight per week. Outside ±this value returns `'faster'`. NEEDS EXPERT REVIEW.
+ */
+export const TARGET_MAINTAIN_FRACTION_PER_WEEK_TOLERANCE = 0.005;
